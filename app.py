@@ -10,52 +10,48 @@ with open("clean_orders.json", "r", encoding="utf-8") as file:
     orders = json.load(file)
 
 
-def matches_filters(order, question):
+MONTHS = {
+    "january": 1, "february": 2, "march": 3,
+    "april": 4, "may": 5, "june": 6,
+    "july": 7, "august": 8, "september": 9,
+    "october": 10, "november": 11, "december": 12
+}
+
+
+def order_matches(order, question):
     q = question.lower()
 
-    # Match region if explicitly mentioned
-    regions = {o["region"].lower() for o in orders}
-    for region in regions:
+    # Region filter
+    for region in {o["region"].lower() for o in orders}:
         if re.search(r"\b" + re.escape(region) + r"\b", q):
             if order["region"].lower() != region:
                 return False
 
-    # Match product if explicitly mentioned
-    products = {o["product"].lower() for o in orders}
-    for product in products:
-        if product in q and order["product"].lower() != product:
-            return False
+    # Product filter
+    for product in {o["product"] for o in orders}:
+        if product.lower() in q:
+            if order["product"].lower() != product.lower():
+                return False
 
-    # Match customer ID if explicitly mentioned
-    customer_ids = {o["customer"].lower() for o in orders}
-    for customer in customer_ids:
-        if customer in q and order["customer"].lower() != customer:
-            return False
+    # Customer ID filter
+    for customer in {o["customer"] for o in orders}:
+        if customer.lower() in q:
+            if order["customer"].lower() != customer.lower():
+                return False
 
-    # Match year and month when present
-    months = {
-        "january": 1, "february": 2, "march": 3,
-        "april": 4, "may": 5, "june": 6,
-        "july": 7, "august": 8, "september": 9,
-        "october": 10, "november": 11, "december": 12
-    }
+    # Month and year filters use the order creation date
+    order_date = datetime.fromisoformat(
+        order["created_at"].replace("Z", "+00:00")
+    )
 
-    for month_name, month_number in months.items():
-        if month_name in q:
-            date_value = datetime.fromisoformat(
-                order["created_at"].replace("Z", "+00:00")
-            )
-            if date_value.month != month_number:
+    for month_name, month_number in MONTHS.items():
+        if re.search(r"\b" + month_name + r"\b", q):
+            if order_date.month != month_number:
                 return False
 
     year_match = re.search(r"\b(20\d{2})\b", q)
-    if year_match:
-        year = int(year_match.group(1))
-        date_value = datetime.fromisoformat(
-            order["created_at"].replace("Z", "+00:00")
-        )
-        if date_value.year != year:
-            return False
+    if year_match and order_date.year != int(year_match.group(1)):
+        return False
 
     return True
 
@@ -77,19 +73,23 @@ def answer_question():
 
     q = question.lower()
 
-    if "refund" in q:
+    # Determine which order status the question asks about
+    if any(word in q for word in ("refund", "refunded", "refunds")):
         wanted_status = "refunded"
-    elif "revenue" in q or "sales" in q or "paid" in q:
+    elif any(word in q for word in (
+        "revenue", "sales", "paid", "earn", "earned",
+        "income", "turnover", "sold"
+    )):
         wanted_status = "paid"
     else:
         return jsonify({
-            "error": "Please ask about revenue, sales, or refunds."
+            "error": "Unsupported question"
         }), 400
 
     selected = [
         order for order in orders
         if order["status"] == wanted_status
-        and matches_filters(order, question)
+        and order_matches(order, question)
     ]
 
     total_cents = sum(
