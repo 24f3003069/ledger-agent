@@ -57,10 +57,7 @@ def order_matches(order, question):
         order["created_at"].replace("Z", "+00:00")
     )
 
-    if order_date.tzinfo is not None:
-        order_date = order_date.astimezone(
-            ZoneInfo("Asia/Kolkata")
-        )
+    # Keep the original timestamp date
 
     # Filter by month
     for month_name, month_number in MONTHS.items():
