@@ -1,4 +1,5 @@
 
+```python
 from flask import Flask, request, jsonify
 from datetime import datetime
 import json
@@ -11,44 +12,60 @@ with open("clean_orders.json", "r", encoding="utf-8") as file:
 
 
 MONTHS = {
-    "january": 1, "february": 2, "march": 3,
-    "april": 4, "may": 5, "june": 6,
-    "july": 7, "august": 8, "september": 9,
-    "october": 10, "november": 11, "december": 12
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "april": 4,
+    "may": 5,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "september": 9,
+    "october": 10,
+    "november": 11,
+    "december": 12
 }
 
 
 def order_matches(order, question):
     q = question.lower()
 
-    # Region filter
+    # Filter by region
     for region in {o["region"].lower() for o in orders}:
         if re.search(r"\b" + re.escape(region) + r"\b", q):
             if order["region"].lower() != region:
                 return False
 
-    # Product filter
-    for product in {o["product"] for o in orders}:
-        if product.lower() in q:
-            if order["product"].lower() != product.lower():
+    # Filter by product
+    for product in {o["product"].lower() for o in orders}:
+        if product in q and order["product"].lower() != product:
+            return False
+
+    # Filter by customer ID
+    for customer in {o["customer"].lower() for o in orders}:
+        if re.search(r"\b" + re.escape(customer) + r"\b", q):
+            if order["customer"].lower() != customer:
                 return False
 
-    # Customer ID filter
-    for customer in {o["customer"] for o in orders}:
-        if customer.lower() in q:
-            if order["customer"].lower() != customer.lower():
-                return False
+    # Parse order date and convert to Asia/Kolkata
+    from zoneinfo import ZoneInfo
 
-    # Month and year filters use the order creation date
     order_date = datetime.fromisoformat(
         order["created_at"].replace("Z", "+00:00")
     )
 
+    if order_date.tzinfo is not None:
+        order_date = order_date.astimezone(
+            ZoneInfo("Asia/Kolkata")
+        )
+
+    # Filter by month
     for month_name, month_number in MONTHS.items():
         if re.search(r"\b" + month_name + r"\b", q):
             if order_date.month != month_number:
                 return False
 
+    # Filter by year
     year_match = re.search(r"\b(20\d{2})\b", q)
     if year_match and order_date.year != int(year_match.group(1)):
         return False
@@ -73,29 +90,38 @@ def answer_question():
 
     q = question.lower()
 
-    # Determine which order status the question asks about
-    if any(word in q for word in ("refund", "refunded", "refunds")):
+    # Determine requested order status
+    if re.search(r"\b(refund|refunded|refunds)\b", q):
         wanted_status = "refunded"
-    elif any(word in q for word in (
-        "revenue", "sales", "paid", "earn", "earned",
-        "income", "turnover", "sold"
-    )):
-        wanted_status = "paid"
-    else:
-        return jsonify({
-            "error": "Unsupported question"
-        }), 400
 
+    elif re.search(
+        r"\b(revenue|sales|paid|earn|earned|income|turnover|sold)\b",
+        q
+    ):
+        wanted_status = "paid"
+
+    else:
+        return jsonify({"error": "Unsupported question"}), 400
+
+    # Select matching orders
     selected = [
         order for order in orders
-        if order["status"] == wanted_status
+        if order["status"].lower() == wanted_status
         and order_matches(order, question)
     ]
 
+    # Calculate the answer
     if re.search(r"\b(count|how many|number of)\b", q):
         answer = len(selected)
+
+    elif re.search(r"\b(average|avg|mean)\b", q):
+        answer = round(
+            sum(order["amount_usd_cents"] for order in selected)
+            / len(selected)
+        ) if selected else 0
+
     else:
-        answer = sum(   
+        answer = sum(
             order["amount_usd_cents"] for order in selected
         )
 
@@ -104,3 +130,4 @@ def answer_question():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
+```
