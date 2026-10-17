@@ -1,6 +1,7 @@
-
+```python
 from flask import Flask, request, jsonify
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import json
 import re
 
@@ -37,8 +38,9 @@ def order_matches(order, question):
 
     # Filter by product
     for product in {o["product"].lower() for o in orders}:
-        if product in q and order["product"].lower() != product:
-            return False
+        if re.search(r"\b" + re.escape(product) + r"\b", q):
+            if order["product"].lower() != product:
+                return False
 
     # Filter by customer ID
     for customer in {o["customer"].lower() for o in orders}:
@@ -46,9 +48,7 @@ def order_matches(order, question):
             if order["customer"].lower() != customer:
                 return False
 
-    # Parse order date and convert to Asia/Kolkata
-    from zoneinfo import ZoneInfo
-
+    # Convert dates to the required timezone
     order_date = datetime.fromisoformat(
         order["created_at"].replace("Z", "+00:00")
     )
@@ -89,7 +89,7 @@ def answer_question():
 
     q = question.lower()
 
-    # Determine requested order status
+    # Determine the requested order status
     if re.search(r"\b(refund|refunded|refunds)\b", q):
         wanted_status = "refunded"
 
@@ -109,15 +109,20 @@ def answer_question():
         and order_matches(order, question)
     ]
 
-    # Calculate the answer
-    if re.search(r"\b(count|how many|number of)\b", q):
-        answer = len(selected)
-
-    elif re.search(r"\b(average|avg|mean)\b", q):
+    # Average must be checked BEFORE count because
+    # "how many US dollars" asks for an amount, not order count.
+    if re.search(r"\b(average|avg|mean)\b", q) or (
+        "how many" in q and re.search(
+            r"\b(dollars|usd|money)\b", q
+        )
+    ):
         answer = round(
             sum(order["amount_usd_cents"] for order in selected)
             / len(selected)
         ) if selected else 0
+
+    elif re.search(r"\b(count|how many|number of)\b", q):
+        answer = len(selected)
 
     else:
         answer = sum(
@@ -129,4 +134,4 @@ def answer_question():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
-
+```
