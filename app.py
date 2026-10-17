@@ -118,7 +118,8 @@ def answer_question():
     ):
         answer = round(
             sum(order["amount_usd_cents"] for order in selected)
-            / len(selected)
+            / len(selected) / 100,
+            2
         ) if selected else 0
 
     elif re.search(r"\b(count|how many|number of)\b", q):
