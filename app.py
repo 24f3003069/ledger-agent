@@ -92,11 +92,14 @@ def answer_question():
         and order_matches(order, question)
     ]
 
-    total_cents = sum(
-        order["amount_usd_cents"] for order in selected
-    )
+    if re.search(r"\b(count|how many|number of)\b", q):
+        answer = len(selected)
+    else:
+        answer = sum(   
+            order["amount_usd_cents"] for order in selected
+        )
 
-    return jsonify({"answer": total_cents})
+    return jsonify({"answer": answer})
 
 
 if __name__ == "__main__":
