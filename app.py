@@ -10,6 +10,10 @@ app = Flask(__name__)
 with open("clean_orders.json", "r", encoding="utf-8") as file:
     orders = json.load(file)
 
+# Create these sets once to make filtering faster
+REGIONS = {o["region"].lower() for o in orders}
+PRODUCTS = {o["product"].lower() for o in orders}
+CUSTOMERS = {o["customer"].lower() for o in orders}
 
 MONTHS = {
     "january": 1,
@@ -31,24 +35,24 @@ def order_matches(order, question):
     q = question.lower()
 
     # Filter by region
-    for region in {o["region"].lower() for o in orders}:
+    for region in REGIONS:
         if re.search(r"\b" + re.escape(region) + r"\b", q):
             if order["region"].lower() != region:
                 return False
 
     # Filter by product
-    for product in {o["product"].lower() for o in orders}:
+    for product in PRODUCTS:
         if re.search(r"\b" + re.escape(product) + r"\b", q):
             if order["product"].lower() != product:
                 return False
 
     # Filter by customer ID
-    for customer in {o["customer"].lower() for o in orders}:
+    for customer in CUSTOMERS:
         if re.search(r"\b" + re.escape(customer) + r"\b", q):
             if order["customer"].lower() != customer:
                 return False
 
-    # Convert dates to the required timezone
+    # Convert order date to Asia/Kolkata
     order_date = datetime.fromisoformat(
         order["created_at"].replace("Z", "+00:00")
     )
@@ -89,7 +93,7 @@ def answer_question():
 
     q = question.lower()
 
-    # Determine the requested order status
+    # Identify the requested order status
     if re.search(r"\b(refund|refunded|refunds)\b", q):
         wanted_status = "refunded"
 
@@ -109,25 +113,32 @@ def answer_question():
         and order_matches(order, question)
     ]
 
-    # Average must be checked BEFORE count because
-    # "how many US dollars" asks for an amount, not order count.
-    if re.search(r"\b(average|avg|mean)\b", q) or (
-        "how many" in q and re.search(
-            r"\b(dollars|usd|money)\b", q
+    # Calculate the requested result
+    if (
+        re.search(r"\b(average|avg|mean)\b", q)
+        or (
+            "how many" in q
+            and re.search(r"\b(dollars|usd|money)\b", q)
         )
     ):
+        # Average in US dollars, rounded to two decimal places
         answer = round(
-            sum(order["amount_usd_cents"] for order in selected)
-            / len(selected) / 100,
+            sum(
+                order["amount_usd_cents"]
+                for order in selected
+            ) / len(selected) / 100,
             2
         ) if selected else 0
 
     elif re.search(r"\b(count|how many|number of)\b", q):
+        # Count matching orders
         answer = len(selected)
 
     else:
+        # Total amount in USD cents
         answer = sum(
-            order["amount_usd_cents"] for order in selected
+            order["amount_usd_cents"]
+            for order in selected
         )
 
     return jsonify({"answer": answer})
@@ -135,3 +146,4 @@ def answer_question():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
+
