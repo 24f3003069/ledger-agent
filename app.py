@@ -243,10 +243,13 @@ def answer_question():
         answer = len(selected)
 
     else:
-        # Keep the existing total format: USD cents.
-        answer = sum(
-            get_amount_cents(order)
-            for order in selected
+        # Return total revenue in USD dollars.
+        answer = round(
+            sum(
+                get_amount_cents(order)
+                for order in selected
+            ) / 100,
+            2
         )
 
     return jsonify({"answer": answer})
