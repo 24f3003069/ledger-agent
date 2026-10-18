@@ -1,3 +1,4 @@
+
 from flask import Flask, request, jsonify
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -6,59 +7,167 @@ import re
 
 app = Flask(__name__)
 
+# Load the prepared order data.
 with open("clean_orders.json", "r", encoding="utf-8") as file:
     orders = json.load(file)
 
 MONTHS = {
-    "january": 1, "february": 2, "march": 3,
-    "april": 4, "may": 5, "june": 6,
-    "july": 7, "august": 8, "september": 9,
-    "october": 10, "november": 11, "december": 12
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "april": 4,
+    "may": 5,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "september": 9,
+    "october": 10,
+    "november": 11,
+    "december": 12,
 }
 
-# Prepare lookup values once instead of rebuilding them for every order.
+TIMEZONE = ZoneInfo("Asia/Kolkata")
+
+
+def contains_word(text, word):
+    return bool(
+        re.search(r"\b" + re.escape(word) + r"\b", text)
+    )
+
+
+# Prepare searchable values once when the application starts.
 REGIONS = sorted(
-    {o["region"].lower() for o in orders},
-    key=len, reverse=True
+    {str(o["region"]).lower() for o in orders},
+    key=len,
+    reverse=True,
 )
+
 PRODUCTS = sorted(
-    {o["product"].lower() for o in orders},
-    key=len, reverse=True
+    {str(o["product"]).lower() for o in orders},
+    key=len,
+    reverse=True,
 )
+
 CUSTOMERS = sorted(
-    {o["customer"].lower() for o in orders},
-    key=len, reverse=True
+    {str(o["customer"]).lower() for o in orders},
+    key=len,
+    reverse=True,
 )
 
 
-def order_matches(order, regions, products, customers,
-                  month_number, year):
-    if regions and order["region"].lower() not in regions:
-        return False
+def get_order_date(order):
+    date_value = datetime.fromisoformat(
+        order["created_at"].replace("Z", "+00:00")
+    )
 
-    if products and order["product"].lower() not in products:
-        return False
+    if date_value.tzinfo is not None:
+        date_value = date_value.astimezone(TIMEZONE)
 
-    if customers and order["customer"].lower() not in customers:
-        return False
+    return date_value
 
-    if month_number is not None or year is not None:
-        date_value = datetime.fromisoformat(
-            order["created_at"].replace("Z", "+00:00")
+
+def get_matching_orders(question):
+    q = question.lower()
+
+    # Identify the requested order status.
+    if re.search(r"\b(refund|refunded|refunds)\b", q):
+        wanted_status = "refunded"
+    elif re.search(
+        r"\b(revenue|sales|paid|earn|earned|income|turnover|sold)\b",
+        q,
+    ):
+        wanted_status = "paid"
+    else:
+        return None
+
+    # Find region filters mentioned in the question.
+    regions = {
+        region
+        for region in REGIONS
+        if contains_word(q, region)
+    }
+
+    # Find product filters mentioned in the question.
+    products = {
+        product
+        for product in PRODUCTS
+        if contains_word(q, product)
+    }
+
+    # Find customer filters mentioned in the question.
+    customers = {
+        customer
+        for customer in CUSTOMERS
+        if contains_word(q, customer)
+    }
+
+    # Find month and year filters.
+    month_number = None
+
+    for month_name, number in MONTHS.items():
+        if contains_word(q, month_name):
+            month_number = number
+            break
+
+    year_match = re.search(r"\b(20\d{2})\b", q)
+    year = int(year_match.group(1)) if year_match else None
+
+    selected = []
+
+    for order in orders:
+        if str(order["status"]).lower() != wanted_status:
+            continue
+
+        if regions and str(order["region"]).lower() not in regions:
+            continue
+
+        if products and str(order["product"]).lower() not in products:
+            continue
+
+        if customers and str(order["customer"]).lower() not in customers:
+            continue
+
+        # Only parse dates when a date filter was requested.
+        if month_number is not None or year is not None:
+            order_date = get_order_date(order)
+
+            if (
+                month_number is not None
+                and order_date.month != month_number
+            ):
+                continue
+
+            if year is not None and order_date.year != year:
+                continue
+
+        selected.append(order)
+
+    return selected
+
+
+def get_amount_cents(order):
+    return int(order.get("amount_usd_cents", 0))
+
+
+def is_top_product_question(q):
+    return bool(
+        re.search(
+            r"\b(top|best|highest|most)\s*[- ]?\s*"
+            r"(selling|sold|selling\s+product|revenue|"
+            r"profitable)\b",
+            q,
         )
-
-        if date_value.tzinfo is not None:
-            date_value = date_value.astimezone(
-                ZoneInfo("Asia/Kolkata")
-            )
-
-        if month_number is not None and date_value.month != month_number:
-            return False
-
-        if year is not None and date_value.year != year:
-            return False
-
-    return True
+        or re.search(
+            r"\b(which|what)\s+product\b.*"
+            r"\b(most|highest|top|best|greatest)\b",
+            q,
+        )
+        or re.search(
+            r"\b(product|products)\b.*"
+            r"\b(highest|most|maximum|largest)\s+revenue\b",
+            q,
+        )
+    )
 
 
 @app.route("/", methods=["GET"])
@@ -78,51 +187,32 @@ def answer_question():
 
     q = question.lower()
 
-    # Determine the requested status.
-    if re.search(r"\b(refund|refunded|refunds)\b", q):
-        wanted_status = "refunded"
-    elif re.search(
-        r"\b(revenue|sales|paid|earn|earned|income|turnover|sold)\b",
-        q
-    ):
-        wanted_status = "paid"
-    else:
+    selected = get_matching_orders(question)
+
+    if selected is None:
         return jsonify({"error": "Unsupported question"}), 400
 
-    # Identify filters once per question.
-    regions = {
-        region for region in REGIONS
-        if re.search(r"\b" + re.escape(region) + r"\b", q)
-    }
+    # TOP-SELLING PRODUCT: group paid revenue by product.
+    # This must be checked before the ordinary revenue sum.
+    if is_top_product_question(q):
+        product_revenue = {}
 
-    products = {
-        product for product in PRODUCTS
-        if re.search(r"\b" + re.escape(product) + r"\b", q)
-    }
+        for order in selected:
+            product = str(order["product"])
+            product_revenue[product] = (
+                product_revenue.get(product, 0)
+                + get_amount_cents(order)
+            )
 
-    customers = {
-        customer for customer in CUSTOMERS
-        if re.search(r"\b" + re.escape(customer) + r"\b", q)
-    }
+        if not product_revenue:
+            answer = None
+        else:
+            answer = max(
+                product_revenue,
+                key=product_revenue.get,
+            )
 
-    month_number = None
-    for month_name, number in MONTHS.items():
-        if re.search(r"\b" + month_name + r"\b", q):
-            month_number = number
-            break
-
-    year_match = re.search(r"\b(20\d{2})\b", q)
-    year = int(year_match.group(1)) if year_match else None
-
-    # Filter orders efficiently.
-    selected = [
-        order for order in orders
-        if order["status"].lower() == wanted_status
-        and order_matches(
-            order, regions, products, customers,
-            month_number, year
-        )
-    ]
+        return jsonify({"answer": answer})
 
     # Average questions must be checked before count questions.
     is_average = bool(
@@ -137,22 +227,34 @@ def answer_question():
     )
 
     if is_average:
-        answer = round(
-            sum(o["amount_usd_cents"] for o in selected)
-            / len(selected) / 100,
-            2
-        ) if selected else 0
+        # Return average in USD dollars, rounded to 2 decimals.
+        answer = (
+            round(
+                sum(get_amount_cents(o) for o in selected)
+                / len(selected)
+                / 100,
+                2,
+            )
+            if selected
+            else 0
+        )
 
     elif is_count:
         answer = len(selected)
 
     else:
+        # Keep the existing total format: USD cents.
         answer = sum(
-            o["amount_usd_cents"] for o in selected
+            get_amount_cents(order)
+            for order in selected
         )
 
     return jsonify({"answer": answer})
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(
+        host="0.0.0.0",
+        port=5000,
+        debug=False,
+    )
