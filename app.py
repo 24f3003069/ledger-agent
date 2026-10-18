@@ -214,6 +214,17 @@ def answer_question():
 
         return jsonify({"answer": answer})
 
+    # Count distinct customers, not individual orders.
+    if re.search(
+        r"\b(different|distinct|unique)\s+customers\b",
+        q
+    ):
+        answer = len({
+            order["customer"]
+            for order in selected
+        })
+        return jsonify({"answer": answer})
+
     # Average questions must be checked before count questions.
     is_average = bool(
         re.search(r"\b(average|avg|mean)\b", q)
